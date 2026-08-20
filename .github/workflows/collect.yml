@@ -4,7 +4,7 @@ on:
   schedule:
     # GitHub Actions cron is UTC. During CEST, 07:07-21:52 UTC = 09:07-23:52 in Paris.
     # Offset from :00/:15/:30/:45 to reduce scheduler contention.
-    - cron: "7,22,37,52 7-21 * * *"
+    - cron: "*/5 7-21 * * *"
   workflow_dispatch:
 
 permissions:
