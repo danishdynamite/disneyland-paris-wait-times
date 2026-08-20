@@ -2,9 +2,9 @@ name: Collect Disneyland Paris wait times
 
 on:
   schedule:
-    # 07:00-21:45 UTC = 09:00-23:45 in Paris during CEST (through September).
-    # The collector itself also guards against overnight runs.
-    - cron: "*/15 7-21 * * *"
+    # GitHub Actions cron is UTC. During CEST, 07:07-21:52 UTC = 09:07-23:52 in Paris.
+    # Offset from :00/:15/:30/:45 to reduce scheduler contention.
+    - cron: "7,22,37,52 7-21 * * *"
   workflow_dispatch:
 
 permissions:
@@ -19,12 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Show trigger and time
+        shell: bash
+        run: |
+          echo "Trigger: ${{ github.event_name }}"
+          echo "UTC time: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          TZ=Europe/Paris date '+Paris time: %Y-%m-%d %H:%M:%S %Z'
 
       - name: Collect current wait times
         run: python collector.py
