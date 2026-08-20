@@ -13,10 +13,10 @@ PARKS = {
     28: "Disney Adventure World",
 }
 
-# Queue-Times exposes single-rider queues as separate ride records.  These IDs
-# pair each single-rider record with its normal standby attraction.  Using IDs
-# also avoids name differences such as trademark symbols and Ratatouille's
-# French standby name versus English single-rider name.
+# Queue-Times exposes single-rider queues as separate ride records. These IDs
+# pair each single-rider record with its normal standby attraction. Using IDs
+# avoids name differences such as trademark symbols and Ratatouille's French
+# standby name versus English single-rider name.
 SINGLE_RIDER_PARENT_IDS = {
     "7306": "2",       # Indiana Jones
     "7278": "8",       # Hyperspace Mountain
@@ -25,6 +25,7 @@ SINGLE_RIDER_PARENT_IDS = {
     "7277": "32",      # Crush's Coaster
     "7279": "37",      # Ratatouille
     "7280": "34",      # RC Racer
+    "7281": "35",      # Toy Soldiers Parachute Drop
 }
 
 TIMEZONE = ZoneInfo("Europe/Paris")
@@ -79,7 +80,6 @@ def migrate_old_csv_if_needed():
             raise RuntimeError(f"Unexpected CSV schema: {reader.fieldnames}")
         old_rows = list(reader)
 
-    # Index standby rows by observation + park + ride ID.
     combined = {}
     for row in old_rows:
         ride_id = row["ride_id"]
@@ -103,7 +103,6 @@ def migrate_old_csv_if_needed():
             "single_rider_ride_id": "",
         }
 
-    # Merge the separate single-rider records into their parent attraction.
     for row in old_rows:
         sr_id = row["ride_id"]
         parent_id = SINGLE_RIDER_PARENT_IDS.get(sr_id)
@@ -123,6 +122,48 @@ def migrate_old_csv_if_needed():
     print(f"Migrated {len(old_rows)} old queue rows to {len(combined)} combined attraction rows")
 
 
+def repair_combined_csv():
+    """Merge any single-rider rows that were previously emitted separately."""
+    if not DATA_FILE.exists() or DATA_FILE.stat().st_size == 0:
+        return
+
+    with DATA_FILE.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames != FIELDNAMES:
+            return
+        rows = list(reader)
+
+    by_key = {
+        (row["timestamp"], row["park"], row["ride_id"]): row
+        for row in rows
+        if row["ride_id"] not in SINGLE_RIDER_PARENT_IDS
+    }
+
+    repaired = False
+    remove_ids = set()
+    for row in rows:
+        sr_id = row["ride_id"]
+        parent_id = SINGLE_RIDER_PARENT_IDS.get(sr_id)
+        if not parent_id:
+            continue
+        parent = by_key.get((row["timestamp"], row["park"], parent_id))
+        if not parent:
+            continue
+        parent["single_rider_wait_minutes"] = row["standby_wait_minutes"]
+        parent["single_rider_status"] = row["status"]
+        parent["single_rider_ride_id"] = sr_id
+        remove_ids.add(id(row))
+        repaired = True
+
+    if repaired:
+        rows = [row for row in rows if id(row) not in remove_ids]
+        with DATA_FILE.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=FIELDNAMES)
+            writer.writeheader()
+            writer.writerows(rows)
+        print("Repaired previously separate single-rider rows")
+
+
 def existing_keys():
     if not DATA_FILE.exists() or DATA_FILE.stat().st_size == 0:
         return set()
@@ -135,6 +176,7 @@ def existing_keys():
 
 def main():
     migrate_old_csv_if_needed()
+    repair_combined_csv()
     now = datetime.now(TIMEZONE)
 
     if not (8 <= now.hour <= 23):
@@ -152,7 +194,6 @@ def main():
         rides = [(land, ride) for land, ride in iter_rides(payload)]
         by_id = {str(ride.get("id", "")): (land, ride) for land, ride in rides}
 
-        # First emit normal/standby attractions.
         park_rows = {}
         for land_name, ride in rides:
             ride_id = str(ride.get("id", ""))
@@ -180,7 +221,6 @@ def main():
                 "single_rider_ride_id": "",
             }
 
-        # Then merge each single-rider queue into its parent row.
         for sr_id, parent_id in SINGLE_RIDER_PARENT_IDS.items():
             sr_entry = by_id.get(sr_id)
             parent = park_rows.get(parent_id)
